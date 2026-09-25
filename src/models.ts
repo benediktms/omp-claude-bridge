@@ -2,15 +2,13 @@
 // `resolveModel` returns the first partial match, so `opus` resolves to the first-listed opus entry.
 // Extracted from index.ts so tests can import without activating the extension.
 
-export const MODEL_IDS_IN_ORDER = ["claude-fable-5", "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6", "claude-sonnet-5", "claude-sonnet-4-6", "claude-haiku-4-5"];
+export const MODEL_IDS_IN_ORDER = ["claude-opus-5-5", "claude-fable-5-1", "claude-sonnet-5", "claude-haiku-4-5"];
 
-// Workaround for models that ship without a thinkingLevelMap. Sonnet 5 and
-// Sonnet 4.6 have no map, so getSupportedThinkingLevels hides xhigh (it's
-// opt-in). Both models' top effort tier is "max" with no real xhigh (verified
-// via Claude Code's supportedModels API), so xhigh->max matches opus-4-6.
+// Claude Code exposes xhigh and max separately for the adaptive-thinking models.
 const DEFAULT_THINKING_LEVEL_MAPS: Record<string, Record<string, string>> = {
-	"claude-sonnet-5": { xhigh: "max" },
-	"claude-sonnet-4-6": { xhigh: "max" },
+	"claude-opus-5-5": { xhigh: "xhigh" },
+	"claude-fable-5-1": { xhigh: "xhigh" },
+	"claude-sonnet-5": { xhigh: "xhigh" },
 };
 
 // Project pi-ai's model entries down to the fields OMP's registerProvider expects,
@@ -20,8 +18,8 @@ export function buildModels<T extends { id: string; [key: string]: any }>(piAiMo
 	return MODEL_IDS_IN_ORDER
 		.map((id) => piAiModels.find((m) => m.id === id))
 		.filter((m) => m != null)
-		// Forward thinkingLevelMap so per-model overrides (e.g. opus-4-7 mapping
-		// xhigh->xhigh instead of xhigh->max) are visible to the effort lookup.
+		// Forward per-model overrides so the bridge can preserve Claude Code's
+		// distinct xhigh and max effort tiers.
 		.map(({ id, name, reasoning, input, contextWindow, maxTokens, thinkingLevelMap }) => ({
 			id,
 			name,
@@ -51,11 +49,8 @@ export type ClaudeCodeRuntimeModel = {
 const TWO_HUNDRED_K_CONTEXT = 200_000;
 const ONE_M_CONTEXT = 1_000_000;
 
-// Measured Claude Agent SDK subscription/OAuth behavior. Do not infer this from
-// pi-ai's advertised contextWindow: bare Opus 4.7 serves 1M, bare Opus 4.8 does
-// not, bare Fable 5 serves 200K while claude-fable-5[1m] serves 1M, and [1m]
-// entitlement differs by model. Returns null when a model has no runtime for the
-// requested forced window (that model is hidden from the picker in that mode).
+// Claude Code's supportedModels API is authoritative for the runtime aliases and
+// context windows below. Returns null when the requested window is unavailable.
 export function resolveClaudeCodeRuntimeModel(modelId: string, settings: LongContextSettings): ClaudeCodeRuntimeModel | null {
 	switch (settings.contextWindow) {
 		case "1m":
@@ -67,30 +62,16 @@ export function resolveClaudeCodeRuntimeModel(modelId: string, settings: LongCon
 	}
 }
 
-function resolveAutoRuntimeModel(modelId: string, settings: LongContextSettings): ClaudeCodeRuntimeModel {
+function resolveAutoRuntimeModel(modelId: string, _settings: LongContextSettings): ClaudeCodeRuntimeModel {
 	switch (modelId) {
-		case "claude-opus-4-8":
-			return { cliModelId: "claude-opus-4-8[1m]", contextWindow: ONE_M_CONTEXT };
-		case "claude-opus-4-7":
-			return { cliModelId: "claude-opus-4-7", contextWindow: ONE_M_CONTEXT };
-		case "claude-opus-4-6": {
-			const useOneM = settings.plan === "max" || settings.longContextExtraUsage;
-			return {
-				cliModelId: useOneM ? "claude-opus-4-6[1m]" : "claude-opus-4-6",
-				contextWindow: useOneM ? ONE_M_CONTEXT : TWO_HUNDRED_K_CONTEXT,
-			};
-		}
-		case "claude-fable-5":
-			return { cliModelId: "claude-fable-5", contextWindow: TWO_HUNDRED_K_CONTEXT };
+		case "claude-opus-5-5":
+			return { cliModelId: "opus[1m]", contextWindow: ONE_M_CONTEXT };
+		case "claude-fable-5-1":
+			return { cliModelId: "claude-fable-5-1[1m]", contextWindow: ONE_M_CONTEXT };
 		case "claude-sonnet-5":
-			return { cliModelId: "claude-sonnet-5[1m]", contextWindow: ONE_M_CONTEXT };
-		case "claude-sonnet-4-6":
-			return {
-				cliModelId: settings.longContextExtraUsage ? "claude-sonnet-4-6[1m]" : "claude-sonnet-4-6",
-				contextWindow: settings.longContextExtraUsage ? ONE_M_CONTEXT : TWO_HUNDRED_K_CONTEXT,
-			};
+			return { cliModelId: "sonnet", contextWindow: ONE_M_CONTEXT };
 		case "claude-haiku-4-5":
-			return { cliModelId: "claude-haiku-4-5", contextWindow: TWO_HUNDRED_K_CONTEXT };
+			return { cliModelId: "haiku", contextWindow: TWO_HUNDRED_K_CONTEXT };
 		default:
 			console.error(`claude-bridge: encountered model ${modelId} with no known context size, defaulting to 200K`);
 			return { cliModelId: modelId, contextWindow: TWO_HUNDRED_K_CONTEXT };
@@ -99,18 +80,12 @@ function resolveAutoRuntimeModel(modelId: string, settings: LongContextSettings)
 
 function resolveForcedOneMRuntimeModel(modelId: string): ClaudeCodeRuntimeModel | null {
 	switch (modelId) {
-		case "claude-opus-4-8":
-			return { cliModelId: "claude-opus-4-8[1m]", contextWindow: ONE_M_CONTEXT };
-		case "claude-opus-4-7":
-			return { cliModelId: "claude-opus-4-7", contextWindow: ONE_M_CONTEXT };
-		case "claude-opus-4-6":
-			return { cliModelId: "claude-opus-4-6[1m]", contextWindow: ONE_M_CONTEXT };
-		case "claude-fable-5":
-			return { cliModelId: "claude-fable-5[1m]", contextWindow: ONE_M_CONTEXT };
+		case "claude-opus-5-5":
+			return { cliModelId: "opus[1m]", contextWindow: ONE_M_CONTEXT };
+		case "claude-fable-5-1":
+			return { cliModelId: "claude-fable-5-1[1m]", contextWindow: ONE_M_CONTEXT };
 		case "claude-sonnet-5":
-			return { cliModelId: "claude-sonnet-5[1m]", contextWindow: ONE_M_CONTEXT };
-		case "claude-sonnet-4-6":
-			return { cliModelId: "claude-sonnet-4-6[1m]", contextWindow: ONE_M_CONTEXT };
+			return { cliModelId: "sonnet", contextWindow: ONE_M_CONTEXT };
 		case "claude-haiku-4-5":
 			return null;
 		default:
@@ -121,20 +96,12 @@ function resolveForcedOneMRuntimeModel(modelId: string): ClaudeCodeRuntimeModel 
 
 function resolveForcedTwoHundredKRuntimeModel(modelId: string): ClaudeCodeRuntimeModel | null {
 	switch (modelId) {
-		case "claude-opus-4-8":
-			return { cliModelId: "claude-opus-4-8", contextWindow: TWO_HUNDRED_K_CONTEXT };
-		case "claude-opus-4-7":
-			return null;
-		case "claude-opus-4-6":
-			return { cliModelId: "claude-opus-4-6", contextWindow: TWO_HUNDRED_K_CONTEXT };
-		case "claude-fable-5":
-			return { cliModelId: "claude-fable-5", contextWindow: TWO_HUNDRED_K_CONTEXT };
-		case "claude-sonnet-5":
-			return { cliModelId: "claude-sonnet-5", contextWindow: TWO_HUNDRED_K_CONTEXT };
-		case "claude-sonnet-4-6":
-			return { cliModelId: "claude-sonnet-4-6", contextWindow: TWO_HUNDRED_K_CONTEXT };
 		case "claude-haiku-4-5":
-			return { cliModelId: "claude-haiku-4-5", contextWindow: TWO_HUNDRED_K_CONTEXT };
+			return { cliModelId: "haiku", contextWindow: TWO_HUNDRED_K_CONTEXT };
+		case "claude-opus-5-5":
+		case "claude-fable-5-1":
+		case "claude-sonnet-5":
+			return null;
 		default:
 			console.error(`claude-bridge: encountered model ${modelId} with no known 200K runtime, hiding it`);
 			return null;
