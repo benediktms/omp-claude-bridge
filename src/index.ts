@@ -601,6 +601,12 @@ function syncSharedSession(
 		...(modelId ? { model: modelId } : {}),
 	});
 	convertAndImportMessages(session, priorMessages, customToolNameToSdk);
+	if (session.messages.length === 0) {
+		sharedSession = null;
+		debug(`Case 1 empty-import: ${priorMessages.length} prior msgs converted to 0 records, clean start`);
+		debug(`syncResult: path=clean-start empty-import`);
+		return { sessionId: null };
+	}
 	session.save();
 	verifyWrittenSession(session.jsonlPath, session.sessionId, session.messages.length, cwd);
 	sharedSession = { sessionId: session.sessionId, cursor: priorMessages.length, cwd };
